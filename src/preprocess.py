@@ -1,8 +1,21 @@
+from __future__ import annotations
+
 from pathlib import Path
 import json
 import time
+import traceback
+
 import requests
 import pandas as pd
+
+from utils import (
+    make_id,
+    iso_now,
+    ensure_dir,
+    write_json,
+    build_dataset_dir,
+    file_sha256,
+)
 
 # =========================================================
 # CONFIG
@@ -10,13 +23,18 @@ import pandas as pd
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 RAW_DIR = PROJECT_ROOT / "data" / "raw"
 PROCESSED_DIR = PROJECT_ROOT / "data" / "processed"
-FINAL_DATA_PATH = PROJECT_ROOT / "data" / "mulligan_data.csv"
+
+# Legacy compatibility output
+LEGACY_FINAL_DATA_PATH = PROJECT_ROOT / "data" / "mulligan_data.csv"
 
 SUPPORTED_EXTS = {".csv", ".xlsx", ".xls"}
 CARD_COLS = [f"card{i}" for i in range(1, 8)]
 
 SCRYFALL_CACHE_PATH = PROCESSED_DIR / "card_info_cache.json"
 SCRYFALL_NAMED_URL = "https://api.scryfall.com/cards/named"
+
+FEATURE_SCHEMA_VERSION = "v1_step_land_curve"
+
 
 # =========================================================
 # HELPERS
@@ -30,6 +48,7 @@ def load_table(path: Path) -> pd.DataFrame:
     else:
         raise ValueError(f"Unsupported file type: {path}")
 
+
 def normalize_decision(value):
     if pd.isna(value):
         return None
@@ -39,6 +58,7 @@ def normalize_decision(value):
     if v in {"mulligan", "mull", "m", "0", "no", "n"}:
         return 0
     return None
+
 
 def normalize_play_draw(value):
     if pd.isna(value):
@@ -50,15 +70,19 @@ def normalize_play_draw(value):
         return 0
     return None
 
+
 def load_card_info_cache(cache_path: Path) -> dict:
     if cache_path.exists():
         with open(cache_path, "r", encoding="utf-8") as f:
             return json.load(f)
     return {}
 
+
 def save_card_info_cache(cache: dict, cache_path: Path) -> None:
+    ensure_dir(cache_path.parent)
     with open(cache_path, "w", encoding="utf-8") as f:
         json.dump(cache, f, indent=2, sort_keys=True)
+
 
 def fetch_card_info(card_name: str) -> dict:
     response = requests.get(
@@ -74,6 +98,7 @@ def fetch_card_info(card_name: str) -> dict:
         "is_land": ("Land" in data.get("type_line", "")),
         "cmc": float(data.get("cmc", 0.0)),
     }
+
 
 def build_card_info_lookup(unique_cards, cache_path: Path) -> dict:
     cache = load_card_info_cache(cache_path)
@@ -109,16 +134,26 @@ def build_card_info_lookup(unique_cards, cache_path: Path) -> dict:
 
     return cache
 
+
+def list_supported_raw_files(raw_dir: Path) -> list[Path]:
+    if not raw_dir.exists():
+        return []
+
+    return [
+        path
+        for path in sorted(raw_dir.iterdir())
+        if path.is_file() and path.suffix.lower() in SUPPORTED_EXTS
+    ]
+
+
 # =========================================================
 # STEP 1: LOAD AND STANDARDIZE RAW FILES
 # =========================================================
 def load_all_raw_files(raw_dir: Path) -> pd.DataFrame:
     all_frames = []
+    raw_files = list_supported_raw_files(raw_dir)
 
-    for path in sorted(raw_dir.iterdir()):
-        if not path.is_file() or path.suffix.lower() not in SUPPORTED_EXTS:
-            continue
-
+    for path in raw_files:
         df = load_table(path)
 
         for col in CARD_COLS:
@@ -145,6 +180,7 @@ def load_all_raw_files(raw_dir: Path) -> pd.DataFrame:
 
     return pd.concat(all_frames, ignore_index=True)
 
+
 # =========================================================
 # STEP 2: CLEAN DATA
 # =========================================================
@@ -170,6 +206,7 @@ def clean_combined_data(df: pd.DataFrame) -> pd.DataFrame:
 
     return df.reset_index(drop=True)
 
+
 # =========================================================
 # STEP 3: CARD FEATURES
 # =========================================================
@@ -185,6 +222,7 @@ def build_card_count_matrix(df: pd.DataFrame) -> pd.DataFrame:
 
     return pd.DataFrame(records).fillna(0).astype(int)
 
+
 def build_step_encoded_matrix(card_matrix: pd.DataFrame) -> pd.DataFrame:
     step_features = {}
 
@@ -196,6 +234,7 @@ def build_step_encoded_matrix(card_matrix: pd.DataFrame) -> pd.DataFrame:
             step_features[feature_name] = (card_matrix[card] >= k).astype(int)
 
     return pd.DataFrame(step_features, index=card_matrix.index)
+
 
 # =========================================================
 # STEP 4: LAND BUCKET FEATURES
@@ -221,6 +260,7 @@ def add_land_features(clean_df: pd.DataFrame, card_info_lookup: dict) -> pd.Data
 
     return land_df.reset_index(drop=True)
 
+
 # =========================================================
 # STEP 5: MANA VALUE / CURVE FEATURES
 # =========================================================
@@ -240,6 +280,7 @@ def cmc_to_bucket(cmc: float) -> str:
         return "5_drops"
     return "6_plus_drops"
 
+
 def add_mana_value_features(clean_df: pd.DataFrame, card_info_lookup: dict) -> pd.DataFrame:
     rows = []
 
@@ -258,7 +299,7 @@ def add_mana_value_features(clean_df: pd.DataFrame, card_info_lookup: dict) -> p
             card = str(row[col]).strip()
             info = card_info_lookup.get(card, {})
 
-            # 🔑 Skip lands entirely
+            # Skip lands entirely
             if info.get("is_land", False):
                 continue
 
@@ -270,10 +311,11 @@ def add_mana_value_features(clean_df: pd.DataFrame, card_info_lookup: dict) -> p
 
     return pd.DataFrame(rows).reset_index(drop=True)
 
+
 # =========================================================
 # STEP 6: FINAL DATASET
 # =========================================================
-def build_final_dataset(clean_df, card_matrix, land_features, mana_value_features):
+def build_final_dataset(clean_df, step_matrix, land_features, mana_value_features):
     metadata = clean_df[["timestamp", "source_file", "on_play"]].reset_index(drop=True)
     raw_hand = clean_df[[f"card{i}" for i in range(1, 8)]].reset_index(drop=True)
     labels = clean_df[["keep"]].reset_index(drop=True)
@@ -282,19 +324,90 @@ def build_final_dataset(clean_df, card_matrix, land_features, mana_value_feature
         [
             metadata,
             raw_hand,
-            card_matrix.reset_index(drop=True),
+            step_matrix.reset_index(drop=True),
             land_features.reset_index(drop=True),
-            mana_value_features.reset_index(drop=True),  # ← ADD THIS
+            mana_value_features.reset_index(drop=True),
             labels,
         ],
         axis=1,
     )
 
+
+def build_dataset_metadata(
+    dataset_id: str,
+    dataset_dir: Path,
+    final_df: pd.DataFrame,
+    clean_df: pd.DataFrame,
+    raw_files: list[Path],
+    final_data_path: Path,
+) -> dict:
+    raw_file_info = []
+    for path in raw_files:
+        try:
+            raw_file_info.append({
+                "name": path.name,
+                "suffix": path.suffix.lower(),
+                "size_bytes": int(path.stat().st_size),
+            })
+        except Exception:
+            raw_file_info.append({
+                "name": path.name,
+                "suffix": path.suffix.lower(),
+                "size_bytes": None,
+            })
+
+    metadata = {
+        "dataset_id": dataset_id,
+        "created_at": iso_now(),
+        "dataset_dir": str(dataset_dir),
+        "final_data_path": str(final_data_path),
+        "legacy_final_data_path": str(LEGACY_FINAL_DATA_PATH),
+        "feature_schema_version": FEATURE_SCHEMA_VERSION,
+        "n_rows": int(len(clean_df)),
+        "n_columns": int(final_df.shape[1]),
+        "n_unique_source_files": int(clean_df["source_file"].nunique()) if "source_file" in clean_df.columns else 0,
+        "land_bucket_features": ["lands_0_1", "lands_2_4", "lands_5_plus"],
+        "mana_value_bucket_features": [
+            "0_drops",
+            "1_drops",
+            "2_drops",
+            "3_drops",
+            "4_drops",
+            "5_drops",
+            "6_plus_drops",
+        ],
+        "raw_dir": str(RAW_DIR),
+        "raw_files": raw_file_info,
+        "notes": (
+            "Processed dataset snapshot using step encoding, land buckets, "
+            "and nonland mana-value buckets."
+        ),
+    }
+
+    if final_data_path.exists():
+        metadata["dataset_sha256"] = file_sha256(final_data_path)
+
+    return metadata
+
+
 # =========================================================
 # MAIN
 # =========================================================
-def main():
-    PROCESSED_DIR.mkdir(parents=True, exist_ok=True)
+def main(dataset_id: str | None = None, update_legacy_global: bool = True) -> str:
+    ensure_dir(PROCESSED_DIR)
+
+    raw_files = list_supported_raw_files(RAW_DIR)
+    if not raw_files:
+        raise ValueError(f"No supported raw files found in {RAW_DIR}")
+
+    if dataset_id is None:
+        dataset_id = make_id("ds", extra_text=f"{len(raw_files)}_files")
+
+    dataset_dir = build_dataset_dir(PROJECT_ROOT, dataset_id)
+    ensure_dir(dataset_dir)
+
+    final_data_path = dataset_dir / "mulligan_data.csv"
+    metadata_path = dataset_dir / "metadata.json"
 
     print("Loading raw files...")
     combined = load_all_raw_files(RAW_DIR)
@@ -322,13 +435,43 @@ def main():
     print("Building final dataset...")
     final_df = build_final_dataset(clean_df, step_matrix, land_features, mana_value_features)
 
-    final_df.to_csv(FINAL_DATA_PATH, index=False)
+    print("Saving dataset snapshot...")
+    final_df.to_csv(final_data_path, index=False)
+
+    metadata = build_dataset_metadata(
+        dataset_id=dataset_id,
+        dataset_dir=dataset_dir,
+        final_df=final_df,
+        clean_df=clean_df,
+        raw_files=raw_files,
+        final_data_path=final_data_path,
+    )
+    write_json(metadata_path, metadata)
+
+    # Backward compatibility for current train.py / evaluate.py
+    if update_legacy_global:
+        ensure_dir(LEGACY_FINAL_DATA_PATH.parent)
+        final_df.to_csv(LEGACY_FINAL_DATA_PATH, index=False)
 
     print("\nDone.")
+    print(f"Dataset ID: {dataset_id}")
     print(f"Rows: {len(clean_df)}")
-    print(f"Final dataset saved to: {FINAL_DATA_PATH}")
+    print(f"Dataset snapshot saved to: {final_data_path}")
+    print(f"Metadata saved to: {metadata_path}")
+
+    if update_legacy_global:
+        print(f"Legacy global dataset updated at: {LEGACY_FINAL_DATA_PATH}")
+
     print("Land buckets: ['lands_0_1', 'lands_2_4', 'lands_5_plus']")
     print("Mana value buckets: ['0_drops', '1_drops', '2_drops', '3_drops', '4_drops', '5_drops', '6_plus_drops']")
 
+    return dataset_id
+
+
 if __name__ == "__main__":
-    main()
+    try:
+        main()
+    except Exception as e:
+        print(f"\nPreprocessing failed: {type(e).__name__}: {e}")
+        print(traceback.format_exc())
+        raise

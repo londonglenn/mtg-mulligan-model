@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 from pathlib import Path
-import json
 import traceback
 
 import joblib
@@ -11,27 +10,46 @@ from sklearn.model_selection import train_test_split
 from sklearn.linear_model import LogisticRegression
 from sklearn.metrics import accuracy_score, roc_auc_score, log_loss
 
-from utils import make_id, iso_now, ensure_dir, write_json
+from utils import (
+    make_id,
+    iso_now,
+    ensure_dir,
+    write_json,
+    build_dataset_dir,
+    read_json,
+)
 from registry import get_run_paths, register_run, update_run, set_latest_run
 
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
-DATA_PATH = PROJECT_ROOT / "data" / "mulligan_data.csv"
 
 
-def main() -> None:
+def main(
+    dataset_id: str,
+    experiment_id: str = "logreg_l1_default",
+    set_latest: bool = True,
+) -> str:
+    # =========================================================
+    # Resolve dataset snapshot
+    # =========================================================
+    dataset_dir = build_dataset_dir(PROJECT_ROOT, dataset_id)
+    dataset_path = dataset_dir / "mulligan_data.csv"
+    dataset_metadata_path = dataset_dir / "metadata.json"
+
+    if not dataset_path.exists():
+        raise FileNotFoundError(f"Dataset file not found: {dataset_path}")
+
+    dataset_metadata = read_json(dataset_metadata_path, default={})
+
     # =========================================================
     # Config
     # =========================================================
-    dataset_id = "legacy_global_dataset"
-    experiment_id = "logreg_l1_default"
-
     test_size = 0.2
     random_state = 42
 
     model_params = {
-        "penalty": "l1",
         "solver": "saga",
+        "l1_ratio": 1.0,
         "max_iter": 5000,
         "random_state": random_state,
     }
@@ -39,7 +57,7 @@ def main() -> None:
     # =========================================================
     # Create run + register early
     # =========================================================
-    run_id = make_id("run", extra_text=experiment_id)
+    run_id = make_id("run", extra_text=f"{experiment_id}|{dataset_id}")
     paths = get_run_paths(run_id)
     ensure_dir(paths["run_dir"])
 
@@ -50,15 +68,16 @@ def main() -> None:
         "created_at": iso_now(),
         "run_dir": str(paths["run_dir"]),
         "status": "training",
-        "data_path": str(DATA_PATH),
-        "notes": "Training run created from legacy global dataset path.",
+        "dataset_path": str(dataset_path),
+        "dataset_metadata_path": str(dataset_metadata_path),
+        "notes": "Training run created from dataset snapshot.",
     })
 
     try:
         # =========================================================
         # Load data
         # =========================================================
-        df = pd.read_csv(DATA_PATH)
+        df = pd.read_csv(dataset_path)
 
         drop_cols = [c for c in ["timestamp", "source_file"] if c in df.columns]
         raw_card_cols = [f"card{i}" for i in range(1, 8) if f"card{i}" in df.columns]
@@ -115,7 +134,6 @@ def main() -> None:
         # Save artifacts into run folder
         # =========================================================
         joblib.dump(model, paths["model_path"])
-
         write_json(paths["feature_columns_path"], list(X.columns))
         write_json(paths["metrics_path"], metrics)
 
@@ -125,7 +143,9 @@ def main() -> None:
             "experiment_id": experiment_id,
             "created_at": iso_now(),
             "status": "completed",
-            "data_path": str(DATA_PATH),
+            "dataset_path": str(dataset_path),
+            "dataset_metadata_path": str(dataset_metadata_path),
+            "dataset_feature_schema_version": dataset_metadata.get("feature_schema_version"),
             "run_dir": str(paths["run_dir"]),
             "model_path": str(paths["model_path"]),
             "feature_columns_path": str(paths["feature_columns_path"]),
@@ -168,6 +188,8 @@ def main() -> None:
         # =========================================================
         update_run(run_id, {
             "status": "completed",
+            "dataset_path": str(dataset_path),
+            "dataset_metadata_path": str(dataset_metadata_path),
             "model_path": str(paths["model_path"]),
             "feature_columns_path": str(paths["feature_columns_path"]),
             "metrics_path": str(paths["metrics_path"]),
@@ -184,15 +206,20 @@ def main() -> None:
             "test_size": metrics["test_size"],
         })
 
-        set_latest_run(run_id)
+        if set_latest:
+            set_latest_run(run_id)
 
         print(f"\nRun ID: {run_id}")
+        print(f"Dataset ID: {dataset_id}")
         print(f"Saved model to: {paths['model_path']}")
         print(f"Saved metrics to: {paths['metrics_path']}")
         print(f"Saved feature importances to: {paths['top_features_path']}")
         print(f"Saved selected features to: {paths['selected_features_path']}")
         print(f"Run directory: {paths['run_dir']}")
-        print("Set as latest run.")
+        if set_latest:
+            print("Set as latest run.")
+
+        return run_id
 
     except Exception as e:
         error_message = f"{type(e).__name__}: {e}"
@@ -212,4 +239,6 @@ def main() -> None:
 
 
 if __name__ == "__main__":
-    main()
+    raise SystemExit(
+        "This file now expects to be called from pipeline.py or imported directly as train.main(dataset_id=...)"
+    )
