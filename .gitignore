@@ -1,0 +1,54 @@
+# ========================
+# Python
+# ========================
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.venv/
+env/
+venv/
+
+# ========================
+# Data (DO NOT COMMIT)
+# ========================
+data/raw/
+data/processed/datasets/
+data/_temp_extract/
+downloads/
+
+# Allow card cache if you want (optional)
+data/processed/card_info_cache.json
+
+# ========================
+# Models (DO NOT COMMIT RUNS)
+# ========================
+models/runs/
+
+# But KEEP registry structure
+!models/
+!models/registry.json
+!models/latest.json
+
+# ========================
+# Reports (optional)
+# ========================
+reports/
+
+# ========================
+# OS / Editor
+# ========================
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+
+# ========================
+# Jupyter
+# ========================
+.ipynb_checkpoints/
+
+# ========================
+# Logs
+# ========================
+*.log
