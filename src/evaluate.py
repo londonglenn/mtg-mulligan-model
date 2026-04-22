@@ -30,10 +30,6 @@ N_SPLITS = 5
 RANDOM_STATE = 42
 
 
-# =========================
-# Helper Functions
-# =========================
-
 def label_to_name(value):
     return "keep" if int(value) == 1 else "mulligan"
 
@@ -78,9 +74,53 @@ def resolve_dataset_path(run_entry: dict, metadata: dict) -> Path:
     return dataset_path
 
 
-# =========================
-# Main
-# =========================
+def build_feature_report(final_model, feature_columns: list[str]) -> tuple[pd.DataFrame, pd.DataFrame, str | None]:
+    if hasattr(final_model, "coef_"):
+        coef_df = pd.DataFrame({
+            "feature": feature_columns,
+            "coefficient": final_model.coef_[0],
+        }).sort_values("coefficient", ascending=False)
+
+        selected_coef_df = coef_df[coef_df["coefficient"] != 0].copy()
+        selected_coef_df["abs_coefficient"] = selected_coef_df["coefficient"].abs()
+        selected_coef_df = (
+            selected_coef_df
+            .sort_values("abs_coefficient", ascending=False)
+            .drop(columns=["abs_coefficient"])
+        )
+
+        return coef_df, selected_coef_df, "coefficient"
+
+    if hasattr(final_model, "feature_importances_"):
+        imp_df = pd.DataFrame({
+            "feature": feature_columns,
+            "importance": final_model.feature_importances_,
+        }).sort_values("importance", ascending=False)
+
+        selected_imp_df = imp_df[imp_df["importance"] > 0].copy()
+
+        return imp_df, selected_imp_df, "importance"
+
+    empty = pd.DataFrame({"feature": feature_columns})
+    return empty, empty.copy(), None
+
+
+def get_selected_feature_counts(final_model) -> tuple[int | None, int | None]:
+    if hasattr(final_model, "coef_"):
+        return (
+            int((final_model.coef_[0] != 0).sum()),
+            int((final_model.coef_[0] == 0).sum()),
+        )
+
+    if hasattr(final_model, "feature_importances_"):
+        importances = final_model.feature_importances_
+        return (
+            int((importances > 0).sum()),
+            int((importances == 0).sum()),
+        )
+
+    return None, None
+
 
 def main(run_id: str | None = None) -> str:
     resolved_run_id = resolve_run_id(run_id)
@@ -121,11 +161,17 @@ def main(run_id: str | None = None) -> str:
                 + (" ..." if len(missing_features) > 10 else "")
             )
 
+        feature_name_map = metadata.get("feature_name_map")
+
         X = df[feature_columns].copy()
         y = df["keep"].copy()
 
-        X_np = X.to_numpy()
+        if feature_name_map:
+            X = X.rename(columns=feature_name_map)
+
         y_np = y.to_numpy()
+
+        model_type = metadata.get("model_type", run_entry.get("model_type", "unknown"))
 
         # =========================
         # Cross Validation
@@ -144,16 +190,16 @@ def main(run_id: str | None = None) -> str:
 
         cv_results = cross_validate(
             clone(model),
-            X_np,
-            y_np,
+            X,
+            y,
             cv=cv,
             scoring=scoring,
         )
 
         probs = cross_val_predict(
             clone(model),
-            X_np,
-            y_np,
+            X,
+            y,
             cv=cv,
             method="predict_proba"
         )[:, 1]
@@ -195,27 +241,22 @@ def main(run_id: str | None = None) -> str:
         preds = (probs >= threshold).astype(int)
 
         # =========================
-        # Coefficients / Selected Features
+        # Feature Report / Selected Features
         # =========================
         final_model = clone(model)
-        final_model.fit(X_np, y_np)
+        final_model.fit(X, y)
 
-        coef_df = pd.DataFrame({
-            "feature": feature_columns,
-            "coefficient": final_model.coef_[0]
-        }).sort_values("coefficient", ascending=False)
-
-        selected_coef_df = coef_df[coef_df["coefficient"] != 0].copy()
-        selected_coef_df["abs_coefficient"] = selected_coef_df["coefficient"].abs()
-        selected_coef_df = selected_coef_df.sort_values(
-            "abs_coefficient",
-            ascending=False
-        ).drop(columns=["abs_coefficient"])
+        top_features_df, selected_features_df, feature_report_kind = build_feature_report(
+            final_model,
+            feature_columns,
+        )
+        n_selected_features, n_zero_features = get_selected_feature_counts(final_model)
 
         # =========================
         # Metrics
         # =========================
         evaluation_metrics = {
+            "model_type": model_type,
             "cv_n_splits": int(N_SPLITS),
             "cv_shuffle": True,
             "cv_random_state": int(RANDOM_STATE),
@@ -238,10 +279,14 @@ def main(run_id: str | None = None) -> str:
 
             "chosen_threshold": float(threshold),
             "balanced_accuracy_at_chosen_threshold": float(best_bal_acc),
-
-            "n_selected_features": int((final_model.coef_[0] != 0).sum()),
-            "n_zero_features": int((final_model.coef_[0] == 0).sum()),
         }
+
+        if n_selected_features is not None:
+            evaluation_metrics["n_selected_features"] = int(n_selected_features)
+        if n_zero_features is not None:
+            evaluation_metrics["n_zero_features"] = int(n_zero_features)
+        if feature_report_kind is not None:
+            evaluation_metrics["feature_report_kind"] = feature_report_kind
 
         baseline_probs = np.full(len(y_np), y_np.mean())
         evaluation_metrics["baseline_log_loss"] = float(log_loss(y_np, baseline_probs))
@@ -330,8 +375,8 @@ def main(run_id: str | None = None) -> str:
         false_keeps.to_csv(paths["false_keeps_path"], index=False)
         false_mulls.to_csv(paths["false_mulligans_path"], index=False)
 
-        coef_df.to_csv(paths["top_features_path"], index=False)
-        selected_coef_df.to_csv(paths["selected_features_path"], index=False)
+        top_features_df.to_csv(paths["top_features_path"], index=False)
+        selected_features_df.to_csv(paths["selected_features_path"], index=False)
 
         with open(paths["run_summary_path"], "w", encoding="utf-8") as f:
             f.write("Cross-validated evaluation summary\n")
@@ -339,19 +384,28 @@ def main(run_id: str | None = None) -> str:
             f.write(f"run_id: {resolved_run_id}\n")
             f.write(f"dataset_id: {run_entry.get('dataset_id')}\n")
             f.write(f"experiment_id: {run_entry.get('experiment_id')}\n")
+            f.write(f"model_type: {model_type}\n")
             for k, v in metrics.items():
                 f.write(f"{k}: {v}\n")
 
         metadata.update({
             "evaluation_completed_at": iso_now(),
             "chosen_threshold": float(threshold),
-            "n_selected_features": int((final_model.coef_[0] != 0).sum()),
-            "n_zero_features": int((final_model.coef_[0] == 0).sum()),
+            "model_type": model_type,
         })
+
+        if n_selected_features is not None:
+            metadata["n_selected_features"] = int(n_selected_features)
+        if n_zero_features is not None:
+            metadata["n_zero_features"] = int(n_zero_features)
+        if feature_report_kind is not None:
+            metadata["feature_report_kind"] = feature_report_kind
+
         write_json(paths["metadata_path"], metadata)
 
         update_run(resolved_run_id, {
             "status": "completed",
+            "model_type": model_type,
             "metrics_path": str(paths["metrics_path"]),
             "metadata_path": str(paths["metadata_path"]),
             "threshold_sweep_path": str(paths["threshold_sweep_path"]),
@@ -371,12 +425,19 @@ def main(run_id: str | None = None) -> str:
             "evaluation_completed_at": metrics["evaluation_completed_at"],
         })
 
+        if n_selected_features is not None:
+            update_run(resolved_run_id, {"n_selected_features": int(n_selected_features)})
+        if n_zero_features is not None:
+            update_run(resolved_run_id, {"n_zero_features": int(n_zero_features)})
+
         print("\nDone.")
         print(f"Run ID: {resolved_run_id}")
+        print(f"Model type: {model_type}")
         print(f"Dataset path: {dataset_path}")
         print(f"Best threshold: {threshold}")
         print(f"Balanced accuracy: {best_bal_acc}")
-        print(f"Selected features: {metrics['n_selected_features']}")
+        if n_selected_features is not None:
+            print(f"Selected features: {n_selected_features}")
         print(f"Reports saved to: {paths['run_dir']}")
 
         return resolved_run_id
