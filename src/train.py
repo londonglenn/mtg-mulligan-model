@@ -108,7 +108,7 @@ def make_lightgbm_feature_name_map(feature_columns: list[str]) -> dict[str, str]
 def build_logreg_search(random_state: int = 42) -> RandomizedSearchCV:
     base_model = LogisticRegression(
         solver="saga",
-        penalty="l1",
+        l1_ratio=1,
         max_iter=5000,
         random_state=random_state,
     )
