@@ -422,3 +422,7 @@ Captures nonlinear land curve behavior.
 * LightGBM uses feature-name mapping for compatibility
 * Scryfall metadata is cached locally
 * Dataset and run IDs are auto-generated for reproducibility
+
+## Code Demo
+
+[![Watch the demo](https://img.youtube.com/vi/VIDEO_ID/0.jpg)](https://youtu.be/sGYe-N_sdRc)
