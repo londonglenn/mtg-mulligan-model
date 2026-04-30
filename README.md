@@ -48,73 +48,125 @@ The pipeline supports:
 ├── train.py                  # Trains/tunes models
 └── utils.py                  # Shared filesystem, JSON, ID, and hashing helpers
 ```
-Setup
+Here is your content cleaned up into a structured, paste-ready Markdown README format:
 
-Create and activate a virtual environment:
+---
 
+# MTG Mulligan Model Pipeline
+
+## Setup
+
+### 1. Create and Activate Virtual Environment
+
+```bash
 python -m venv .venv
+```
 
-On Windows PowerShell:
+**Windows PowerShell:**
 
+```powershell
 .\.venv\Scripts\Activate.ps1
+```
 
-Install dependencies:
+### 2. Install Dependencies
 
+```bash
 pip install pandas numpy scikit-learn xgboost lightgbm joblib requests matplotlib
-Pipeline Usage
+```
+
+---
+
+## Pipeline Usage
 
 Run the full pipeline:
 
+```bash
 python pipeline.py
+```
 
 You will be prompted to choose:
 
-1) Single full-feature study
-2) Full ablation study
-Mode 1: Single Full-Feature Study
+* **Single full-feature study**
+* **Full ablation study**
+
+---
+
+## Modes
+
+### Mode 1: Single Full-Feature Study
 
 Runs all supported models on the full feature set:
 
-Logistic Regression with L1 regularization
-XGBoost
-LightGBM
-Mode 2: Full Ablation Study
+* Logistic Regression (L1 regularization)
+* XGBoost
+* LightGBM
 
-Runs each model across these feature configurations:
+---
 
-full
-no_mana_buckets
-land_only
-cards_only
+### Mode 2: Full Ablation Study
 
-This is useful for comparing how much performance comes from land features, card identity features, and mana curve features.
+Runs each model across different feature configurations:
 
-Manual Step-by-Step Usage
-1. Ingest Data
+* `full`
+* `no_mana_buckets`
+* `land_only`
+* `cards_only`
+
+This allows comparison of how much performance comes from:
+
+* Land features
+* Card identity features
+* Mana curve features
+
+---
+
+## Manual Step-by-Step Usage
+
+### 1. Ingest Data
+
+```bash
 python ingest.py
+```
 
-Downloads the uploaded data zip from the server, extracts it, and copies only new CSV/Excel files into data/raw/.
+* Downloads uploaded data from the server
+* Extracts the archive
+* Copies only new CSV/Excel files into:
 
-2. Preprocess Data
+  ```
+  data/raw/
+  ```
+
+---
+
+### 2. Preprocess Data
+
+```bash
 python preprocess.py
+```
 
-Creates a processed dataset snapshot under:
+Creates processed dataset:
 
+```
 data/processed/datasets/<dataset_id>/mulligan_data.csv
+```
 
-The preprocessing step:
+#### Preprocessing Includes:
 
-Normalizes keep/mulligan labels
-Normalizes play/draw context
-Deduplicates rows
-Builds step-encoded card features
-Fetches Scryfall metadata
-Adds land-count features
-Adds mana-value bucket features
-3. Train Models
+* Normalize keep/mulligan labels
+* Normalize play/draw context
+* Deduplicate rows
+* Build step-encoded card features
+* Fetch Scryfall metadata
+* Add land-count features
+* Add mana-value bucket features
 
-Training is usually called through pipeline.py, but individual runs can be started from Python:
+---
 
+### 3. Train Models
+
+Usually run via `pipeline.py`, but can be called directly:
+
+```python
 import train
 
 run_id = train.main(
@@ -122,48 +174,72 @@ run_id = train.main(
     experiment_id="full",
     model_type="logreg_l1",
 )
+```
 
-Supported model types:
+#### Supported Models:
 
-logreg_l1
-xgboost
-lightgbm
+* `logreg_l1`
+* `xgboost`
+* `lightgbm`
 
-Supported experiment IDs:
+#### Supported Experiments:
 
-full
-no_mana_buckets
-land_only
-cards_only
-4. Evaluate a Run
+* `full`
+* `no_mana_buckets`
+* `land_only`
+* `cards_only`
+
+---
+
+### 4. Evaluate a Run
+
+```python
 import evaluate
 
 evaluate.main(run_id="YOUR_RUN_ID")
+```
 
-Evaluation saves:
+#### Evaluation Outputs:
 
-Cross-validated accuracy
-Cross-validated ROC-AUC
-Cross-validated log loss
-Out-of-fold log loss
-Threshold sweep
-Best balanced-accuracy threshold
-Confusion matrix
-Prediction-level results
-Misclassified hands
-False keeps
-False mulligans
-Top feature reports
-5. Analyze Recent Runs
+* Cross-validated accuracy
+* ROC-AUC
+* Log loss
+* Out-of-fold log loss
+* Threshold sweep
+* Best balanced-accuracy threshold
+* Confusion matrix
+* Prediction-level results
+* Misclassified hands:
+
+  * False keeps
+  * False mulligans
+* Top feature reports
+
+---
+
+### 5. Analyze Recent Runs
+
+```bash
 python analyze_runs.py
+```
 
-This generates comparison outputs for recent model runs, including ablation tables and figures.
+Outputs:
 
-Outputs are saved to:
-
+```
 reports/ablation_analysis/
-figure/
-6. Predict a Single Hand
+reports/ablation_analysis/figures/
+```
+
+Includes:
+
+* Ablation tables
+* Performance comparison plots
+
+---
+
+### 6. Predict a Single Hand
+
+```python
 from predict import predict
 
 hand = [
@@ -179,129 +255,178 @@ hand = [
 result = predict(hand, on_play=1)
 
 print(result)
+```
 
-Example output:
+#### Example Output:
 
+```json
 {
-    "keep_probability": 0.73,
-    "decision": 1
+  "keep_probability": 0.73,
+  "decision": 1
 }
+```
 
-decision = 1 means keep.
-decision = 0 means mulligan.
+* `decision = 1` → Keep
+* `decision = 0` → Mulligan
 
-Model Artifacts
+---
 
-Each trained run is saved under:
+## Model Artifacts
 
+Each run is saved under:
+
+```
 models/runs/<run_id>/
+```
 
-A typical run folder contains:
+### Contents:
 
-model.pkl
-feature_columns.json
-metadata.json
-metrics.json
-threshold_sweep.csv
-confusion_matrix.csv
-predictions.csv
-misclassified.csv
-false_keeps.csv
-false_mulligans.csv
-top_features.csv
-selected_features.csv
-run_summary.txt
+* `model.pkl`
+* `feature_columns.json`
+* `metadata.json`
+* `metrics.json`
+* `threshold_sweep.csv`
+* `confusion_matrix.csv`
+* `predictions.csv`
+* `misclassified.csv`
+* `false_keeps.csv`
+* `false_mulligans.csv`
+* `top_features.csv`
+* `selected_features.csv`
+* `run_summary.txt`
 
-The model registry is stored in:
+---
 
-models/registry.json
+## Model Registry
 
-The default model used by predict.py is tracked in:
+* Registry:
 
-models/latest.json
-Publishing a Model
+  ```
+  models/registry.json
+  ```
+* Latest model:
 
-To publish a trained model bundle to the server, set your admin token first.
+  ```
+  models/latest.json
+  ```
 
-On Windows PowerShell:
+---
 
+## Publishing a Model
+
+### 1. Set Admin Token
+
+```powershell
 $env:ADMIN_TOKEN="your_admin_token_here"
+```
 
-Then run:
+### 2. Publish
 
+```python
 import publish_model
 
 publish_model.main(run_id="YOUR_RUN_ID", set_latest=True)
+```
 
-The published bundle includes:
+### Published Bundle Includes:
 
-Trained model
-Feature column list
-Metadata
-Metrics
-Manifest with SHA-256 hashes
-Feature Engineering
+* Trained model
+* Feature columns
+* Metadata
+* Metrics
+* SHA-256 manifest
 
-The shared feature logic lives in features.py.
+---
 
-Current feature groups include:
+## Feature Engineering
 
-Card Identity Features
+Feature logic is defined in:
 
-Cards are represented with step-encoded features.
+```
+features.py
+```
 
-For example, if a hand contains two copies of a card, both of these features can be active:
+### Feature Groups
 
-Card Name_1
-Card Name_2
-Land Features
-num_lands
-num_lands_sq
+#### Card Identity Features
 
-This lets the logistic model learn that both too few and too many lands can be bad.
+Step-encoded representation:
 
-Mana Value Buckets
-0_drops
-1_drops
-2_drops
-3_drops
-4_drops
-5_drops
-6_plus_drops
+* `CardName_1`
+* `CardName_2`
 
-Lands are excluded from mana-value buckets.
+---
 
-Play/Draw Context
-on_play
+#### Land Features
 
-on_play = 1 means the hand is on the play.
-on_play = 0 means the hand is on the draw.
+* `num_lands`
+* `num_lands_sq`
 
-Evaluation Metrics
+Captures nonlinear land curve behavior.
 
-The main metrics are:
+---
 
-ROC-AUC
+#### Mana Value Buckets
 
-Measures how well the model ranks keepable hands above mulligan hands across all possible thresholds.
+* `0_drops`
+* `1_drops`
+* `2_drops`
+* `3_drops`
+* `4_drops`
+* `5_drops`
+* `6_plus_drops`
 
-Log Loss
+> Lands are excluded.
 
-Measures the quality of predicted probabilities. This is the main tuning objective.
+---
 
-Lower log loss means the model is not only making correct predictions, but also assigning better-calibrated probabilities.
+#### Play/Draw Context
 
-Accuracy
+* `on_play = 1` → on the play
+* `on_play = 0` → on the draw
 
-Measures the fraction of correct keep/mulligan predictions at a chosen threshold.
+---
 
-Balanced Accuracy
+## Evaluation Metrics
 
-Averages performance across both classes. This is useful when the dataset has more keeps than mulligans.
+### ROC-AUC
 
-Notes
-Training uses randomized hyperparameter search optimized for log loss.
-Evaluation uses 5-fold stratified cross-validation.
-LightGBM uses a feature-name mapping because some card names contain characters that LightGBM does not accept directly.
-Scryfall card metadata is cached locally to avoid repeated API calls.
-Dataset and run IDs are generated automatically for reproducibility.
+* Measures ranking quality across thresholds
+
+---
+
+### Log Loss (Primary Metric)
+
+* Measures probability calibration
+* Lower is better
+
+---
+
+### Accuracy
+
+* Fraction of correct predictions at a threshold
+
+---
+
+### Balanced Accuracy
+
+* Averages performance across both classes
+* Useful for class imbalance
+
+---
+
+## Notes
+
+* Training uses randomized hyperparameter search (optimized for log loss)
+* Evaluation uses 5-fold stratified cross-validation
+* LightGBM uses feature-name mapping for compatibility
+* Scryfall metadata is cached locally
+* Dataset and run IDs are auto-generated for reproducibility
+
+---
+
+If you want, I can also:
+
+* Add badges (Python version, license, etc.)
+* Format this for GitHub specifically (with anchors + TOC)
+* Or integrate your repo links + demo/video section cleanly into this README
