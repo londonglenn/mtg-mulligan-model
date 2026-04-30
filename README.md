@@ -21,7 +21,7 @@ The pipeline supports:
 ## Repository Structure
 
 ```text
-.
+
 ├── data/
 │   ├── raw/                  # Raw uploaded CSV / Excel files
 │   └── processed/
@@ -47,6 +47,7 @@ The pipeline supports:
 ├── registry.py               # Tracks model runs and latest model
 ├── train.py                  # Trains/tunes models
 └── utils.py                  # Shared filesystem, JSON, ID, and hashing helpers
+```
 Setup
 
 Create and activate a virtual environment:
