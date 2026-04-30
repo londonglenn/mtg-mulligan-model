@@ -425,4 +425,4 @@ Captures nonlinear land curve behavior.
 
 ## Code Demo
 
-[![Watch the demo](https://img.youtube.com/vi/VIDEO_ID/0.jpg)](https://youtu.be/sGYe-N_sdRc)
+[Watch the demo](https://youtu.be/sGYe-N_sdRc)
